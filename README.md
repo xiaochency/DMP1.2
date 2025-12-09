@@ -18,8 +18,8 @@ sed -i 's/^PORT=.*/PORT=8080/' run.sh
 ./run.sh
 ```
 ## 安装启动DMP
-选项1：安装DMP
-选项2：启动DMP
+安装DMP
+启动DMP
 浏览器访问：http://公网ip:80
 
 ## :grapes: 默认用户名密码

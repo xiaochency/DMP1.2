@@ -11,10 +11,11 @@ import (
 	"dst-management-platform-api/utils"
 	"embed"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	static "github.com/soulteary/gin-static"
 	"io"
 	"runtime"
+
+	"github.com/gin-gonic/gin"
+	static "github.com/soulteary/gin-static"
 )
 
 //go:embed dist
@@ -69,7 +70,7 @@ func initialize() {
 	//检查文件
 	utils.CheckFiles("all")
 	//创建DST手动安装脚本
-	utils.CreateManualInstallScript()
+	//utils.CreateManualInstallScript()
 	//配置必要的数据
 	utils.SetInitInfo()
 	//gin.SetMode(gin.DebugMode)
