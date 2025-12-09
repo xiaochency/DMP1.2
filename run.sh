@@ -11,8 +11,6 @@ PORT=80
 # 数据库文件所在目录，例如：./config
 CONFIG_DIR="./"
 
-# 虚拟内存大小，例如 1G 4G等
-SWAPSIZE=2G
 # --------------- ↑可修改↑ --------------- #
 
 ###########################################
@@ -21,10 +19,8 @@ SWAPSIZE=2G
 
 USER=$(whoami)
 ExeFile="$HOME/dmp"
-
-DMP_GITHUB_HOME_URL="https://github.com/miracleEverywhere/dst-management-platform-api"
-DMP_GITHUB_API_URL="https://api.github.com/repos/miracleEverywhere/dst-management-platform-api/releases/latest"
-SCRIPT_GITHUB="https://raw.githubusercontent.com/miracleEverywhere/dst-management-platform-api/master/run.sh"
+install_dir="$HOME/dst"
+steamcmd_dir="$HOME/steamcmd"
 
 cd "$HOME" || exit
 
@@ -71,33 +67,14 @@ function unset_tty() {
     exec 2> /dev/tty
 }
 
-# 定义一个函数来提示用户输入
-function prompt_user() {
-    clear
-    echo_green "饥荒管理平台(DMP)"
-    echo_green "--- ${DMP_GITHUB_HOME_URL} ---"
-    if [[ $(echo "${DMP_GITHUB_HOME_URL}" | tr '/' '\n' | grep -vc "^$") != "4" ]] ||
-       [[ $(echo "${DMP_GITHUB_API_URL}" | tr '/' '\n' | grep -vc "^$") != "7" ]] ||
-       [[ $(echo "${SCRIPT_GITHUB}" | tr '/' '\n' | grep -vc "^$") != "6" ]]; then
-        echo_red_blink "饥荒管理平台 run.sh 脚本可能被加速站点篡改，请切换加速站点重新下载"
+# 检查文件
+function check_for_file() {
+    if [ ! -e "$1" ]; then
+        return 1
     fi
-    echo_yellow "————————————————————————————————————————————————————————————"
-    echo_green "[0]: 下载并启动饥荒管理平台"
-    echo_yellow "————————————————————————————————————————————————————————————"
-    echo_green "[1]: 启动饥荒管理平台"
-    echo_green "[2]: 关闭饥荒管理平台"
-    echo_green "[3]: 重启饥荒管理平台"
-    echo_yellow "————————————————————————————————————————————————————————————"
-    echo_green "[4]: 更新饥荒管理平台"
-    echo_green "[5]: 强制更新饥荒管理平台"
-    echo_green "[6]: 更新run.sh启动脚本"
-    echo_yellow "————————————————————————————————————————————————————————————"
-    echo_green "[7]: 设置虚拟内存"
-    echo_green "[8]: 更改端口"
-    echo_green "[9]: 退出脚本"
-    echo_yellow "————————————————————————————————————————————————————————————"
-    echo_yellow "请输入要执行的操作 [0-9]: "
+    return 0
 }
+
 
 # 检查jq
 function check_jq() {
@@ -114,19 +91,7 @@ function check_jq() {
     fi
 }
 
-function check_curl() {
-    echo_cyan "正在检查curl命令"
-    if ! curl --version >/dev/null 2>&1; then
-        OS=$(grep -P "^ID=" /etc/os-release | awk -F'=' '{print($2)}' | sed "s/['\"]//g")
-        if [[ ${OS} == "ubuntu" ]]; then
-            apt install -y curl
-        else
-            if grep -P "^ID_LIKE=" /etc/os-release | awk -F'=' '{print($2)}' | sed "s/['\"]//g" | grep rhel; then
-                yum install -y curl
-            fi
-        fi
-    fi
-}
+
 
 function check_strings() {
     echo_cyan "正在检查strings命令"
@@ -160,45 +125,180 @@ function check_glibc() {
 
 # 下载函数:下载链接,尝试次数,超时时间(s)
 function download() {
-    local url="$1"
-    local output="$2"
+    local download_url="$1"
+    local tries="$2"
     local timeout="$3"
-
-    unset_tty
-    curl -L --connect-timeout "${timeout}" --progress-bar -o "${output}" "${url}"
-    set_tty
-
-    return $? # 返回 wget 的退出状态
+    local output_file="$4"  # 添加输出文件参数
+    
+    wget -q --show-progress --tries="$tries" --timeout="$timeout" -O "$output_file" "$download_url"
+    return $?
 }
 
 # 安装主程序
 function install_dmp() {
-    check_jq
-    check_curl
-    # 原GitHub下载链接
-    github_url_acc=$(curl -s -L ${DMP_GITHUB_API_URL} | jq -r '.assets[] | select(.name == "dmp.tgz") | .browser_download_url')
-    # 生成加速链接
-    url="$(curl -s -L https://api.akams.cn/github | jq -r --arg idx "$acceleration_index" '.data[$idx | tonumber].url')/${github_url_acc}"
-    echo_yellow "正在使用加速站点[${acceleration_index}]进行下载，如果下载失败，请切换加速站点，切换方式："
-    echo_yellow "./run.sh 大于等于0的数字。例如：./run.sh 2"
-    echo_yellow "如果不输入数字，则默认为0"
-    if download "${url}" "dmp.tgz" 10; then
-        if [ -e "dmp.tgz" ]; then
-            echo_green "DMP下载成功"
-        else
-            echo_red "DMP下载失败"
-            exit 1
+    local download_urls=(
+        "https://gh-proxy.com/github.com/xiaochency/dst-management-platform-api/raw/refs/heads/main/dmp"
+        "https://ghfast.top/https://github.com/xiaochency/dst-management-platform-api/raw/refs/heads/main/dmp"
+    )
+    
+    # 检查 jq
+    if ! check_jq; then
+    echo_red "jq安装失败，请检查网络连接"
+    exit 1
+    fi
+    
+    echo_cyan "开始安装 DMP..."
+    
+    local download_success=false
+    local output_file="dmp"
+    
+    # 尝试多个镜像源
+    for url in "${download_urls[@]}"; do
+        echo_cyan "尝试从镜像源下载: $(basename "$url")"
+        
+        if download "$url" 3 15 "$output_file"; then
+            # 验证下载的文件
+            if [ -f "$output_file" ] && [ -s "$output_file" ]; then
+                # 检查是否是有效的可执行文件（至少要有可执行权限）
+                if head -c 4 "$output_file" | grep -q '^#!/'; then
+                    echo_cyan "检测到脚本文件头部"
+                fi
+                
+                # 设置执行权限
+                chmod 755 "$output_file"
+                
+                # 验证文件是否可执行
+                if [ -x "$output_file" ]; then
+                    echo_green "DMP 下载成功"
+                    download_success=true
+                    break
+                else
+                    echo_red "文件无法设置为可执行"
+                    rm -f "$output_file"
+                fi
+            else
+                echo_red "下载的文件无效或为空"
+                rm -f "$output_file"
+            fi
         fi
-    else
-        echo_red "DMP下载失败"
+    done
+    
+    # 检查是否下载成功
+    if [ "$download_success" = false ]; then
+        echo_red "所有镜像源均下载失败"
+        
+        # 提供手动安装指南
+        echo_cyan "请尝试以下手动安装方法:"
+        echo_cyan "1. 访问 https://github.com/xiaochency/dst-management-platform-api"
+        echo_cyan "2. 手动下载 dmp 文件"
+        echo_cyan "3. 将文件保存到当前目录并运行: chmod +x dmp"
         exit 1
     fi
+}
 
-    set -e
-    tar zxvf dmp.tgz
-    rm -f dmp.tgz
-    chmod +x "$ExeFile"
-    set +e
+# 创建 DstMP.sdb 配置文件
+function create_dstmp_config() {
+    local db_file="DstMP.sdb"
+    
+    echo_cyan "检查配置文件..."
+    
+    # 检查文件是否已存在
+    if [ -f "$db_file" ]; then
+        echo_cyan "检测到已存在的 $db_file 文件"
+        
+        # 备份现有文件
+        local backup_file="${db_file}.backup.$(date +%Y%m%d_%H%M%S)"
+        cp "$db_file" "$backup_file"
+        echo_green "已备份现有配置文件: $backup_file"
+        
+        # 询问是否覆盖
+        read -p "是否覆盖现有的 $db_file 文件？(y/N): " choice
+        case "$choice" in
+            [Yy]* )
+                echo_cyan "覆盖现有配置文件..."
+                ;;
+            * )
+                echo_cyan "保留现有配置文件"
+                return 0
+                ;;
+        esac
+    fi
+    
+    # 创建配置文件
+    echo_cyan "创建 DstMP.sdb 配置文件..."
+    
+    cat > "$db_file" << 'EOF'
+{
+    "username": "admin",
+    "nickname": "",
+    "password": "ba3253876aed6bc22d4a6ff53d8406c6ad864195ed144ab5c87621b6c233b548baeae6956df346ec8c17f5ea10f35ee3cbc514797ed7ddd3145464e2a0bab413",
+    "jwtSecret": "I2vpM14xWYoJkqbnB4wEOA1v0t",
+    "roomSetting": {
+        "base": {
+            "name": "",
+            "description": "",
+            "gameMode": "",
+            "pvp": false,
+            "playerNum": 0,
+            "backDays": 0,
+            "vote": false,
+            "password": "",
+            "token": "",
+            "masterPort": 0,
+            "cavesPort": 0,
+            "clusterKey": "",
+            "shardMasterIp": "",
+            "shardMasterPort": 0,
+            "steamMasterPort": 0,
+            "steamAuthenticationPort": 0
+        },
+        "ground": "",
+        "cave": "",
+        "mod": ""
+    },
+    "multiHost": false,
+    "autoUpdate": {
+        "enable": false,
+        "time": "06:00:00"
+    },
+    "autoAnnounce": null,
+    "autoBackup": {
+        "enable": false,
+        "time": "05:55:00"
+    },
+    "players": null,
+    "statistics": null,
+    "keepalive": {
+        "enable": false,
+        "frequency": 30,
+        "lastTime": "",
+        "cavesLastTime": ""
+    },
+    "announcedID": 0,
+    "sysSetting": {
+        "schedulerSetting": {
+            "playerGetFrequency": 300,
+            "UIDMaintain": {
+                "disable": false,
+                "frequency": 10
+            },
+            "sysMetricsGet": {
+                "disable": true,
+                "frequency": 0
+            }
+        }
+    },
+    "bit64": false,
+    "platform": "Microsoft Windows 10 Pro",
+    "tickRate": 15,
+    "encodeUserPath": {
+        "ground": false,
+        "cave": false
+    }
+}
+EOF
+# 设置权限
+chmod 755 "$db_file"
 }
 
 # 检查进程状态
@@ -206,6 +306,7 @@ function check_dmp() {
     sleep 1
     if pgrep dmp >/dev/null; then
         echo_green "启动成功"
+        echo_green "请浏览器访问http://公网ip:80"
     else
         echo_red "启动失败"
         exit 1
@@ -215,7 +316,7 @@ function check_dmp() {
 # 启动主程序
 function start_dmp() {
     # 检查端口是否被占用,如果被占用则退出
-    port=$(ss -ltnp | awk -v port=${PORT} '$4 ~ ":"port"$" {print $4}')
+    port=$(ss -ltnp | awk -v port="${PORT}" '$4 ~ ":"port"$" {print $4}')
 
     if [ -n "$port" ]; then
        echo_red "端口 $PORT 已被占用: $port", 修改 run.sh 中的 PORT 变量后重新运行
@@ -228,126 +329,49 @@ function start_dmp() {
         nohup "$ExeFile" -c -l ${PORT} -s ${CONFIG_DIR} >dmp.log 2>&1 &
     else
         install_dmp
-        nohup "$ExeFile" -c -l ${PORT} -s ${CONFIG_DIR} >dmp.log 2>&1 &
+        create_dstmp_config
+        if [ -e "$ExeFile" ]; then
+            nohup "$ExeFile" -c -l ${PORT} -s ${CONFIG_DIR} >dmp.log 2>&1 &
+        else
+            echo_red "安装失败，无法启动 DMP"
+            exit 1
+        fi
     fi
 }
 
 # 关闭主程序
 function stop_dmp() {
-    pkill -9 dmp
-    echo_green "关闭成功"
-    sleep 1
-}
-
-# 删除主程序、请求日志、运行日志、遗漏的压缩包
-function clear_dmp() {
-    echo_cyan "正在执行清理"
-    rm -f dmp dmp.log dmpProcess.log
-}
-
-# 检查当前版本号
-function get_current_version() {
-    if [ -e "$ExeFile" ]; then
-        CURRENT_VERSION=$("$ExeFile" -v | head -n1) # 获取输出的第一行作为版本号
-    else
-        CURRENT_VERSION="v0.0.0"
-    fi
-}
-
-# 获取GitHub最新版本号
-function get_latest_version() {
-    check_jq
-    check_curl
-    LATEST_VERSION=$(curl -s -L ${DMP_GITHUB_API_URL} | jq -r .tag_name)
-    if [[ -z "$LATEST_VERSION" ]]; then
-        echo_red "无法获取最新版本号，请检查网络连接或GitHub API"
-        exit 1
-    fi
-}
-
-# 更新启动脚本
-function update_script() {
-    check_curl
-    echo_cyan "正在更新脚本..."
-    TEMP_FILE="/tmp/run.sh"
-    # 生成加速链接
-    url="$(curl -s -L https://api.akams.cn/github | jq -r --arg idx "$acceleration_index" '.data[$idx | tonumber].url')/${SCRIPT_GITHUB}"
-    echo_yellow "正在使用加速站点[${acceleration_index}]进行下载，如果下载失败，请切换加速站点，切换方式："
-    echo_yellow "./run.sh 大于等于0的数字。例如：./run.sh 2"
-    echo_yellow "如果不输入数字，则默认为0"
-    if download "${url}" "${TEMP_FILE}" 10; then
-        if [ -e "${TEMP_FILE}" ]; then
-            echo_green "run.sh下载成功"
-        else
-            echo_red "run.sh下载失败"
-            exit 1
-        fi
-    else
-        echo_red "run.sh下载失败"
-        exit 1
-    fi
-
-    # 修改下载好的最新文件
-    sed -i "s/^PORT=.*/PORT=${PORT}/" $TEMP_FILE
-    sed -i "s/^SWAPSIZE=.*/SWAPSIZE=${SWAPSIZE}/" $TEMP_FILE
-    sed -i "s#^CONFIG_DIR=.*#CONFIG_DIR=${CONFIG_DIR}#" $TEMP_FILE
-
-    # 替换当前脚本
-    mv -f "$TEMP_FILE" "$0" && chmod +x "$0"
-    echo_green "脚本更新完成，3 秒后重新启动..."
-    sleep 3
-    exec "$0"
-}
-
-# 更改端口
-function change_port() {
-    echo_yellow "当前端口: ${PORT}"
-
-    local new_port
-
-    read -rp "请输入新端口号 (1024-65535): " new_port
-
-    if [[ "$new_port" =~ ^[0-9]+$ && "$new_port" -ge 1024 && "$new_port" -le 65535 ]]; then
-
-        if [[ "$new_port" -eq "$PORT" ]]; then
-            echo_yellow "新端口与当前端口相同，无需修改"
-            sleep 2
-            return 0
-        fi
-
-        local port_in_use
-        port_in_use=$(ss -ltnp 2>/dev/null | awk -v port="${new_port}" '$4 ~ ":"port"$" {print $4}')
-
-        if [[ -n "$port_in_use" ]]; then
-            echo_red "错误：端口 ${new_port} 已被占用！"
-            echo_yellow "请选择其他端口，2秒后返回..."
-            sleep 2
-            return 1
-        fi
-
-        if ! sed -i "s|^PORT=.*|PORT=${new_port}|" "$0"; then
-            echo_red "错误：更新脚本文件失败"
-            sleep 2
-            return 1
-        fi
-
-        PORT="${new_port}"
-
-        echo_green "端口已成功更改为: ${new_port}"
-        echo_yellow "提示: 需要重启 DMP 服务才能使新端口生效"
-        echo_cyan "请返回主菜单选择 [1]启动 或 [3]重启 服务，3秒后自动返回主菜单..."
-        sleep 3
-        return 0
-    else
-        echo_red "无效端口号！请输入 1024-65535 范围内的数字。"
+    echo_cyan "正在停止 DMP 服务..."
+    
+    # 检查进程是否存在
+    if pgrep dmp >/dev/null; then
+        # 先尝试正常终止
+        pkill dmp
         sleep 2
-        return 1
+        
+        # 检查是否还在运行，如果还在就强制终止
+        if pgrep dmp >/dev/null; then
+            echo_yellow "进程仍在运行，尝试强制终止..."
+            pkill -9 dmp
+            sleep 1
+        fi
+        
+        # 最终确认进程是否已停止
+        if pgrep dmp >/dev/null; then
+            echo_red "无法停止 DMP 进程，请手动检查"
+            return 1
+        else
+            echo_green "DMP 服务已成功停止"
+        fi
+    else
+        echo_yellow "DMP 进程未运行"
     fi
 }
 
 # 设置虚拟内存
 function set_swap() {
     SWAPFILE=/swap.img
+    SWAPSIZE=2G
 
     # 检查是否已经存在交换文件
     if [ -f $SWAPFILE ]; then
@@ -378,99 +402,187 @@ function set_swap() {
     echo_green "系统swap设置成功"
 }
 
-# 使用无限循环让用户输入命令
-while true; do
-    # 提示用户输入
-    prompt_user
-    # 读取用户输入
-    read -r command
-    # 使用 case 语句判断输入的命令
-    case $command in
-    0)
-        set_tty
-        clear_dmp
-        install_dmp
-        start_dmp
-        check_dmp
-        unset_tty
-        break
-        ;;
-    1)
-        set_tty
-        start_dmp
-        check_dmp
-        unset_tty
-        break
-        ;;
-    2)
-        set_tty
-        stop_dmp
-        unset_tty
-        break
-        ;;
-    3)
-        set_tty
-        stop_dmp
-        start_dmp
-        check_dmp
-        echo_green "重启成功"
-        unset_tty
-        break
-        ;;
-    4)
-        set_tty
-        get_current_version
-        get_latest_version
-        if [[ "$(echo -e "$CURRENT_VERSION\n$LATEST_VERSION" | sort -V | head -n1)" == "$CURRENT_VERSION" && "$CURRENT_VERSION" != "$LATEST_VERSION" ]]; then
-            echo_yellow "当前版本 ($CURRENT_VERSION) 小于最新版本 ($LATEST_VERSION)，即将更新"
-            stop_dmp
-            clear_dmp
+# 安装服务器
+install_dst() {
+    read -p "您确定要安装 Don't Starve Together 服务器吗？(y/n): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo_yellow "安装已取消."
+        return
+    fi
+
+    echo_cyan "正在安装 Don't Starve Together 服务器..."
+    sudo dpkg --add-architecture i386
+    sudo apt-get update
+    apt install -y lib32gcc1     
+	apt install -y lib32gcc-s1
+    apt install -y libcurl4-gnutls-dev:i386
+    apt install -y screen
+	apt install -y unzip
+    echo_green "环境依赖安装完毕"
+
+    mkdir -p ~/.klei/DMP_BACKUP
+    mkdir -p ~/.klei/DMP_MOD/not_ugc
+    mkdir -p ~/.klei/DoNotStarveTogether/MyDediServer/Master
+    mkdir -p ~/.klei/DoNotStarveTogether/MyDediServer/Caves
+    touch ~/.klei/DoNotStarveTogether/MyDediServer/cluster_token.txt
+    touch ~/.klei/DoNotStarveTogether/MyDediServer/adminlist.txt
+    touch ~/.klei/DoNotStarveTogether/MyDediServer/blocklist.txt
+    touch ~/.klei/DoNotStarveTogether/MyDediServer/whitelist.txt
+    echo_green "饥荒初始文件夹创建完成"
+
+    set_swap
+    echo_cyan "设置虚拟内存2GB"
+    mkdir ~/steamcmd
+    cd ~/steamcmd
+    
+    file_name="steamcmd_linux.tar.gz"
+    check_for_file "$file_name"
+
+    if [ $? -eq 0 ]; then
+        echo_yellow "$file_name 存在，正在删除..."
+        rm "$file_name"
+    else
+        echo_cyan "$file_name 不存在，继续下载steamcmd"
+    fi
+
+    wget https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz
+    tar -xvzf steamcmd_linux.tar.gz
+    ./steamcmd.sh +login anonymous +force_install_dir "$install_dir" +app_update 343050 validate +quit
+    
+    echo_cyan "正在验证服务器安装..."
+    cd ~/dst/bin/ || {
+        echo
+        echo_red "======================================"
+        echo_red "✘ 无法进入服务器目录: ~/dst/bin/"
+        echo_red "✘ 请检查是否已正确安装饥荒服务器程序"
+        echo_red "======================================"
+        echo
+        exit 1 "服务器安装失败，请重新安装！"
+    }
+
+    # 服务器安装验证通过后，执行MOD修复
+    if [ -d ~/dst/bin/ ]; then
+        echo_green "=================================================="
+        echo_green "✅ 服务器安装验证通过！"
+        echo_green "=================================================="
+        
+        echo_cyan "正在执行MOD修复..."
+        cp ~/steamcmd/linux32/libstdc++.so.6 ~/dst/bin/lib32/
+        cp ~/steamcmd/linux32/steamclient.so ~/dst/bin/lib32/
+        echo_green "MOD更新bug已修复"
+        
+        echo_green "=================================================="
+        echo_green "✅ Don't Starve Together 服务器安装完成！"
+        echo_green "=================================================="
+    else
+        echo_red "=================================================="
+        echo_red "✘ 服务器安装验证失败！"
+        echo_red "=================================================="
+        exit 1 "服务器安装失败，请重新安装！"
+    fi
+    echo
+}
+
+# 更新服务器
+update_dst() {
+    echo_cyan "正在更新 Don't Starve Together 服务器..."
+    cd "$steamcmd_dir" || exit 1
+    ./steamcmd.sh +login anonymous +force_install_dir "$install_dir" +app_update 343050 validate +quit
+    echo_green "服务器更新完成,请重新执行脚本"
+    cp ~/steamcmd/linux32/steamclient.so ~/dst/bin/lib32/
+    echo_green "MOD更新bug已修复"
+}
+
+# 显示菜单函数
+function show_menu() {
+    clear
+    echo_green "================================================"
+    echo_green "           DMP 管理脚本菜单"
+    echo_green "================================================"
+    echo
+    
+    echo_cyan "  ╔═══════════════════════════════════════════╗"
+    echo_cyan "  ║  1. 安装DMP        4. 安装饥荒服务器      ║"
+    echo_cyan "  ║  ──────────────────────────────────────── ║"
+    echo_cyan "  ║  2. 启动DMP        5. 更新饥荒服务器      ║"
+    echo_cyan "  ║  ──────────────────────────────────────── ║"
+    echo_cyan "  ║  3. 停止DMP        0. 退出脚本            ║"
+    echo_cyan "  ╚═══════════════════════════════════════════╝"
+    
+    echo
+    echo_green "================================================"
+}
+
+# 主菜单循环
+function main_menu() {
+    while true; do
+        show_menu
+        read -p "请输入选择 [0-5]: " choice
+        
+        case $choice in
+            1)
+                echo_cyan "执行: 安装DMP"
+                install_dmp
+                create_dstmp_config
+                ;;
+            2)
+                echo_cyan "执行: 启动DMP"
+                start_dmp
+                check_dmp
+                ;;
+            3)
+                echo_cyan "执行: 停止DMP"
+                stop_dmp
+                ;;
+            4)
+                echo_cyan "执行: 安装DST服务器"
+                install_dst
+                ;;
+            5)
+                echo_cyan "执行: 更新DST服务器"
+                update_dst
+                ;;
+            0)
+                echo_green "感谢使用，再见！"
+                exit 0
+                ;;
+            *)
+                echo_red "无效选择，请输入 0-5 之间的数字"
+                ;;
+        esac
+        
+        echo
+        read -p "按回车键继续..."
+    done
+}
+
+# 检查是否以交互模式运行（无参数）
+if [ -z "$1" ]; then
+    main_menu
+else
+    # 如果有参数，可以根据参数执行相应操作
+    case "$1" in
+        "install")
             install_dmp
+            create_dstmp_config
+            ;;
+        "start")
             start_dmp
             check_dmp
-            echo_green "更新完成"
-        else
-            echo_green "当前版本 ($CURRENT_VERSION) 已是最新版本，无需更新"
-        fi
-        unset_tty
-        break
-        ;;
-    5)
-        set_tty
-        stop_dmp
-        clear_dmp
-        install_dmp
-        start_dmp
-        check_dmp
-        echo_green "强制更新完成"
-        unset_tty
-        break
-        ;;
-    6)
-        set_tty
-        update_script
-        unset_tty
-        break
-        ;;
-    7)
-        set_tty
-        set_swap
-        unset_tty
-        break
-        ;;
-    8)
-        set_tty
-        change_port
-        unset_tty
-        continue
-        ;;
-    9)
-        exit 0
-        break
-        ;;
-    *)
-        echo_red "请输入正确的数字 [0-9]"
-        continue
-        ;;
+            ;;
+        "stop")
+            stop_dmp
+            ;;
+        "install-dst")
+            install_dst
+            ;;
+        "update-dst")
+            update_dst
+            ;;
+        *)
+            echo_red "未知参数: $1"
+            echo_cyan "可用参数: install, start, stop, install-dst, update-dst"
+            exit 1
+            ;;
     esac
-done
+fi

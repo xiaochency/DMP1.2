@@ -1,33 +1,38 @@
 # 本项目为DMP的旧版本备份
 原项目地址：https://github.com/miracleEverywhere/dst-management-platform-api
 ## :watermelon: 使用方法
->**建议使用 Ubuntu 24系统，低版本系统可能会出现GLIBC版本报错**  
+>**建议使用 Ubuntu 24系统，低版本系统可能会出现GLIBC版本报错**
+>**请在root用户下执行本脚本**
 ```shell
 # 执行以下命令，下载脚本
-cd ~ && wget https://dmp-1257278878.cos.ap-chengdu.myqcloud.com/run.sh && chmod +x run.sh
+cd ~ && wget https://gh-proxy.com/raw.githubusercontent.com/xiaochency/dst-management-platform-api/refs/heads/main/run.sh && chmod +x run.sh
+# 或者
+cd ~ && wget  https://ghfast.top/https://raw.githubusercontent.com/xiaochency/dst-management-platform-api/refs/heads/main/run.sh && chmod +x run.sh
 ```
 ```shell
-# 自定义启动端口（8082改为你要用的端口），请手动修改run.sh文件或者
-sed -i 's/^PORT=.*/PORT=8082/' run.sh
+# 自定义启动端口（8080改为你要用的端口），请手动修改run.sh文件或者
+sed -i 's/^PORT=.*/PORT=8080/' run.sh
 ```
 ```shell
 # 根据系统提示输入并回车
 ./run.sh
 ```
-**安装方法**
-```shell
-cd ~ && ./run.sh
-```
-默认启动端口为80，如果您想修改，则修改启动命令：
-```shell
-# 修改端口为8080
-nohup ./dmp -c -l 8080 > dmp.log 2>&1 &
-```
+## 安装启动DMP
+选项1：安装DMP
+选项2：启动DMP
+浏览器访问：http://公网ip:80
+
 ## :grapes: 默认用户名密码
 >登录后请尽快到右上角用户名-个人中心页面修改密码
 >
 >>初始密码：
 >>admin/123456
+
+## 安装饥荒服务器
+选项4：安装饥荒服务器
+
+## 启动服务器
+在DMP平台，创建房间或导入存档
 
 ---
 ## :strawberry: 文件介绍
