@@ -485,25 +485,17 @@ install_dst() {
     fi
 
     echo_cyan "正在安装 Don't Starve Together 服务器..."
-    sudo dpkg --add-architecture i386
-    sudo apt-get update
-    sudo apt-get install -y lib32gcc-s1 libcurl4-gnutls-dev:i386 screen unzip
+    dpkg --add-architecture i386
+    apt-get update
+    apt-get install -y screen unzip lib32gcc-s1
+    apt-get install -y libcurl4-gnutls-dev:i386
+    apt-get install -y libcurl4-gnutls-dev
     echo_green "环境依赖安装完毕"
-
-    mkdir -p ~/.klei/DMP_BACKUP
-    mkdir -p ~/.klei/DMP_MOD/not_ugc
-    mkdir -p ~/.klei/DoNotStarveTogether/MyDediServer/Master
-    mkdir -p ~/.klei/DoNotStarveTogether/MyDediServer/Caves
-    touch ~/.klei/DoNotStarveTogether/MyDediServer/cluster_token.txt
-    touch ~/.klei/DoNotStarveTogether/MyDediServer/adminlist.txt
-    touch ~/.klei/DoNotStarveTogether/MyDediServer/blocklist.txt
-    touch ~/.klei/DoNotStarveTogether/MyDediServer/whitelist.txt
-    echo_green "饥荒初始文件夹创建完成"
 
     set_swap
     echo_cyan "设置虚拟内存2GB"
-    mkdir ~/steamcmd
-    cd ~/steamcmd
+    mkdir $HOME/steamcmd
+    cd $HOME/steamcmd
     
     file_name="steamcmd_linux.tar.gz"
     check_for_file "$file_name"
@@ -517,45 +509,76 @@ install_dst() {
 
     wget https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz
     tar -xvzf steamcmd_linux.tar.gz
+    
+    # 初始安装
     ./steamcmd.sh +login anonymous +force_install_dir "$install_dir" +app_update 343050 validate +quit
     
-    echo_cyan "正在验证服务器安装..."
-    cd ~/dst/bin/ || {
-        echo
-        echo_red "======================================"
-        echo_red "✘ 服务器安装验证失败！"
-        echo_red "✘ 请重新安装！"
-        echo_red "======================================"
-        echo
-        cd "$HOME" #返回root根目录
-        exit 1
-    }
-
-    # 服务器安装验证通过后，执行MOD修复
-    if [ -d ~/dst/bin/ ]; then
+    # 设置最大重试次数
+    max_retries=3
+    retry_count=0
+    install_success=false
+    
+    # 验证安装并重试
+    while [ $retry_count -lt $max_retries ]; do
+        echo_cyan "正在验证服务器安装 (尝试 $((retry_count+1))/$((max_retries+1)))..."
+        
+        # 检查安装目录是否存在
+        if [ -d "$HOME/dst/bin/" ]; then
+            cd $HOME/dst/bin/ && {
+                install_success=true
+                break
+            }
+        fi
+        
+        # 如果验证失败，尝试重新安装
+        if [ $retry_count -lt $max_retries ]; then
+            echo_red "======================================"
+            echo_red "✘✘ 服务器安装验证失败！"
+            echo_red "✘✘ 正在尝试重新安装 ($((retry_count+1))/$max_retries)..."
+            echo_red "======================================"
+            
+            # 进入steamcmd文件夹重新执行安装命令
+            cd $HOME/steamcmd || {
+                echo_red "无法进入 $HOME/steamcmd 目录"
+                break
+            }
+            
+            echo_cyan "正在重新执行安装命令..."
+            ./steamcmd.sh +login anonymous +force_install_dir "$install_dir" +app_update 343050 validate +quit
+            
+            # 增加重试计数器
+            retry_count=$((retry_count+1))
+            
+            # 等待一下再继续
+            sleep 2
+        fi
+    done
+    
+    # 检查最终安装结果
+    if [ "$install_success" = true ]; then
         echo_green "=================================================="
         echo_green "✅ 服务器安装验证通过！"
         echo_green "=================================================="
         
-        echo_cyan "正在执行MOD修复..."
+        # 修复依赖
+        cp $HOME/steamcmd/linux32/libstdc++.so.6 $HOME/dst/bin/lib32/ 2>/dev/null
         cp $HOME/steamcmd/linux32/steamclient.so $HOME/dst/bin/lib32/ 2>/dev/null
         cp $HOME/steamcmd/linux64/steamclient.so $HOME/dst/bin64/lib64/ 2>/dev/null
-        cp $HOME/steamcmd/linux32/libstdc++.so.6 $HOME/dst/bin/lib32/ 2>/dev/null
-        echo_green "MOD更新bug已修复"
+        echo_green "依赖已修复"
         
         echo_green "=================================================="
         echo_green "✅ Don't Starve Together 服务器安装完成！"
         echo_green "=================================================="
     else
         echo_red "=================================================="
-        echo_red "✘ 服务器安装验证失败！"
-        echo_red "✘ 请重新安装！"
+        echo_red "✘✘ 经过 $((max_retries+1)) 次尝试后，服务器安装仍然失败！"
+        echo_red "✘✘ 请检查网络连接或手动安装！"
         echo_red "=================================================="
-        cd "$HOME" #返回root根目录
+        cd "$HOME"
         exit 1
     fi
 
-    # 无论成功还是失败，最后都返回root根目录
+    # 返回root根目录
     cd "$HOME"
     echo
 }
@@ -572,6 +595,102 @@ update_dst() {
     echo_green "MOD更新bug已修复"
 }
 
+# steamcmd自动更新
+function manage_crontab() {
+    echo_green "================================================"
+    echo_green "           steamcmd更新任务"
+    echo_green "================================================"
+    echo_cyan "1. 添加6:10自动更新任务"
+    echo_cyan "2. 添加22:10自动更新任务" 
+    echo_cyan "3. 移除steamcmd更新任务"
+    echo_cyan "0. 返回主菜单"
+    echo_green "================================================"
+    
+    read -p "请输入选择 [0-3]: " crontab_choice
+    
+    # 定义任务内容
+    morning_task="10 6 * * * cd /root/steamcmd && /root/steamcmd/steamcmd.sh +quit > /dev/null 2>&1"
+    evening_task="10 22 * * * cd /root/steamcmd && /root/steamcmd/steamcmd.sh +quit > /dev/null 2>&1"
+    
+    case $crontab_choice in
+        1)
+            echo_cyan "正在检查是否已存在6:10任务..."
+            if crontab -l | grep -F "$morning_task" > /dev/null; then
+                echo_red "6:10自动任务已存在，无需重复添加"
+            else
+                # 备份当前crontab
+                crontab -l > /tmp/crontab_backup 2>/dev/null || echo "# Crontab backup" > /tmp/crontab_backup
+                
+                # 添加新任务
+                (crontab -l 2>/dev/null; echo "$morning_task") | crontab -
+                
+                if [ $? -eq 0 ]; then
+                    echo_green "6:10自动任务添加成功"
+                    echo_cyan "任务内容: $morning_task"
+                else
+                    echo_red "任务添加失败"
+                fi
+            fi
+            ;;
+        2)
+            echo_cyan "正在检查是否已存在22:10任务..."
+            if crontab -l | grep -F "$evening_task" > /dev/null; then
+                echo_red "22:10自动任务已存在，无需重复添加"
+            else
+                # 备份当前crontab
+                crontab -l > /tmp/crontab_backup 2>/dev/null || echo "# Crontab backup" > /tmp/crontab_backup
+                
+                # 添加新任务
+                (crontab -l 2>/dev/null; echo "$evening_task") | crontab -
+                
+                if [ $? -eq 0 ]; then
+                    echo_green "22:10自动任务添加成功"
+                    echo_cyan "任务内容: $evening_task"
+                else
+                    echo_red "任务添加失败"
+                fi
+            fi
+            ;;
+        3)
+            echo_cyan "正在查找并移除steamcmd相关自动任务..."
+            # 创建临时文件，过滤掉包含steamcmd的任务
+            crontab -l 2>/dev/null | grep -v "steamcmd" > /tmp/crontab_new
+            
+            # 安装新的crontab
+            crontab /tmp/crontab_new
+            
+            if [ $? -eq 0 ]; then
+                echo_green "steamcmd自动任务已成功移除"
+                # 显示当前剩余的自动任务
+                current_tasks=$(crontab -l 2>/dev/null | wc -l)
+                if [ $current_tasks -eq 0 ]; then
+                    echo_yellow "当前没有自动任务"
+                else
+                    echo_cyan "当前剩余的自动任务:"
+                    crontab -l
+                fi
+            else
+                echo_red "任务移除失败"
+            fi
+            
+            # 清理临时文件
+            rm -f /tmp/crontab_new
+            ;;
+        0)
+            echo_green "返回主菜单"
+            return 0
+            ;;
+        *)
+            echo_red "无效选择，请输入 0-3 之间的数字"
+            ;;
+    esac
+    
+    # 显示当前crontab状态
+    echo
+    echo_green "当前自动任务列表:"
+    crontab -l 2>/dev/null || echo_yellow "当前没有自动任务"
+}
+
 # 显示菜单函数
 function show_menu() {
     clear
@@ -586,6 +705,7 @@ function show_menu() {
     echo_cyan "4. 安装饥荒服务器"
     echo_cyan "5. 更新饥荒服务器"
     echo_cyan "6. 修改端口"
+    echo_cyan "7. steamcmd自动更新"
     echo_cyan "0. 退出脚本"
     
     echo
@@ -624,6 +744,10 @@ function main_menu() {
             6)
                 echo_cyan "执行: 修改端口"
                 change_port
+                ;;
+            7)  # 新增选项处理
+                echo_cyan "执行: 管理自动任务"
+                manage_crontab
                 ;;
             0)
                 echo_green "感谢使用，再见！"
@@ -665,9 +789,12 @@ else
         "change_port")
             change_port
             ;;
+        "manage-crontab")  # 新增参数支持
+            manage_crontab
+            ;;
         *)
             echo_red "未知参数: $1"
-            echo_cyan "可用参数: install, start, stop, install-dst, update-dst, change_port"
+            echo_cyan "可用参数: install, start, stop, install-dst, update-dst, change_port, manage-crontab"
             exit 1
             ;;
     esac
