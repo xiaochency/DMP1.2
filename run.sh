@@ -507,7 +507,53 @@ install_dst() {
         echo_cyan "$file_name 不存在，继续下载steamcmd"
     fi
 
-    wget https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz
+    # 定义多个steamcmd下载地址
+    steamcmd_urls=(
+        "https://gh-proxy.com/github.com/xiaochency/SteamCmdLinuxFile/releases/download/steamcmd-latest/steamcmd_linux.tar.gz"
+        "https://ghfast.top/github.com/xiaochency/SteamCmdLinuxFile/releases/download/steamcmd-latest/steamcmd_linux.tar.gz"
+        "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz"
+    )
+
+    # 尝试下载，依次使用不同的地址
+    download_success=false
+    for url in "${steamcmd_urls[@]}"; do
+        echo_yellow "正在尝试下载: $url"
+        if wget -q --show-progress --tries=3 --timeout=30 "$url"; then
+            echo_green "下载成功！"
+            download_success=true
+            break
+        else
+            echo_yellow "下载失败，尝试下一个地址..."
+            # 删除可能下载失败的文件
+            rm -f steamcmd_linux.tar.gz 2>/dev/null
+        fi
+        sleep 2  # 短暂延迟后重试
+    done
+
+    # 检查下载是否成功
+    if [ "$download_success" = false ]; then
+        echo_red "=================================================="
+        echo_red "✘✘✘ 所有下载地址均尝试失败！"
+        echo_red "=================================================="
+        echo_red "无法下载 steamcmd，请检查网络连接后重试！"
+        exit 1
+    fi
+
+    # 验证下载的文件
+    if [ ! -f "steamcmd_linux.tar.gz" ]; then
+        echo_red "下载的文件不存在，请检查下载过程"
+        exit 1
+    fi
+
+    file_size=$(stat -c%s "steamcmd_linux.tar.gz" 2>/dev/null || stat -f%z "steamcmd_linux.tar.gz" 2>/dev/null || echo "0")
+    if [ "$file_size" -lt 1000000 ]; then  # 小于1MB可能是错误页面
+        echo_yellow "下载的文件大小异常 ($file_size 字节)，可能下载了错误页面"
+        rm -f steamcmd_linux.tar.gz
+        echo_red "下载的文件可能损坏，请重试或手动下载"
+        exit 1
+    fi
+
+    echo_green "文件验证通过，开始解压..."
     tar -xvzf steamcmd_linux.tar.gz
     
     # 初始安装
